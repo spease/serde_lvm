@@ -1,13 +1,20 @@
 [package]
-name = "labview"
-version = "0.1.0"
 authors = ["Steven Pease <peasteven@gmail.com>"]
+description = "Tools for interacting with LabView and associated file formats"
+homepage = "https://github.com/spease/labview.git"
+name = "labview"
+readme = "README.md"
+version = "0.1.0"
+repository = "https://github.com/spease/labview.git"
 
 [dependencies]
 chrono = "0.4"
 env_logger = "0.4"
+error-chain = "0.10"
+itertools = "0.6"
 log = "0.3"
 num = "0.1"
+semver = "0.7"
 serde_derive = "1.0"
 serde = "1.0"
 strum = "0.8"
