@@ -9,9 +9,10 @@ use serde::de::IntoDeserializer;
 #[derive(Debug)]
 struct Deserializer<R: std::io::BufRead> {
   line_current: String,
+  line_current_pos: usize,
   line_index: usize,
   input: std::io::Lines<R>,
-  separator: lvm::Separator,
+  separator: char,
   sequence_style: SequenceStyle,
 }
 
@@ -29,7 +30,7 @@ impl<R: std::io::BufRead> Deserializer<R> {
     // Parse first line
     let mut s = lines.next().ok_or(Error::from(ErrorKind::ParseEofUnexpected)).chain_err(|| ErrorKind::ParseLine(1))??;
     // Pop separator
-    let separator = s.pop().ok_or(Error::from(ErrorKind::ParseEolUnexpected)).chain_err(|| ErrorKind::ParseLine(1))?;
+    let separator = lvm::Separator::try_from(s.pop().ok_or(Error::from(ErrorKind::ParseEolUnexpected)).chain_err(|| ErrorKind::ParseLine(1))?)?.into();
     // Check header
     if s != Self::HEADER {
       return Err(Error::from(ErrorKind::ParseTokenUnexpected(s, Self::HEADER_OPTIONS))).chain_err(|| ErrorKind::ParseLine(1));
@@ -39,8 +40,9 @@ impl<R: std::io::BufRead> Deserializer<R> {
     let mut d = Deserializer {
       input: lines,
       line_current: String::new(),
+      line_current_pos: 0,
       line_index: 1,
-      separator: lvm::Separator::try_from(separator)?,
+      separator: separator,
       sequence_style: SequenceStyle::Following,
     };
     // Load the next line
@@ -65,17 +67,23 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
 
   #[must_use]
+  fn line_is_empty(&self) -> bool {
+    self.line_current.len() == self.line_current_pos
+  }
+
+  #[must_use]
   fn peek_newline(&mut self) -> bool {
-    self.line_current.is_empty()
+    self.line_is_empty()
   }
 
   #[must_use]
   fn parse_bool(&mut self) -> Result<bool> {
-    match self.parse_token()?.as_ref() {
-      Self::BOOL_NO => Ok(false),
-      Self::BOOL_YES => Ok(true),
-      t => self.line_error(ErrorKind::ParseTokenUnexpected(t.to_string(), Self::BOOL_OPTIONS))
-    }
+    let token = self.parse_token()?.to_string();
+    self.line_result(match token.as_ref() {
+      Self::BOOL_NO => Some(false),
+      Self::BOOL_YES => Some(true),
+      _ => None,
+    }.ok_or_else(|| Error::from(ErrorKind::ParseTokenUnexpected(token, Self::BOOL_OPTIONS))))
   }
 
   /*
@@ -90,15 +98,16 @@ impl<R: std::io::BufRead> Deserializer<R> {
 
   #[must_use]
   fn parse_integer<T: num::Integer>(&mut self) -> Result<T> where T: num::Num<FromStrRadixErr = std::num::ParseIntError> {
-    Ok(T::from_str_radix(self.parse_token()?.as_ref(), 10)?)
+    Ok(T::from_str_radix(self.parse_token()?, 10)?)
   }
 
   #[must_use]
   fn parse_newline_or_eof(&mut self) -> Result<bool> {
-    if self.line_current.is_empty() {
+    if self.line_is_empty() {
       match self.input.next() {
         Some(Ok(x)) => {
           self.line_current = x;
+          self.line_current_pos = 0;
           self.line_index += 1;
           Ok(true)
         },
@@ -106,7 +115,7 @@ impl<R: std::io::BufRead> Deserializer<R> {
         None => Ok(false),
       }
     } else {
-      self.line_error(ErrorKind::ParseEolExpected(self.line_current.to_string()))
+      self.line_error(ErrorKind::ParseEolExpected(self.line_current[self.line_current_pos..].to_string()))
     }
   }
 
@@ -119,28 +128,32 @@ impl<R: std::io::BufRead> Deserializer<R> {
     }
   }
 
+  /*
   #[must_use]
   fn parse_real<T: num::Float>(&mut self) -> Result<T> where T: num::Num<FromStrRadixErr = num::traits::ParseFloatError> {
     T::from_str_radix(self.parse_token()?.as_ref(), 10).map_err(|e|ErrorKind::ParseFloatError(e).into())
   }
+  */
 
   #[must_use]
   fn parse_separators(&mut self, i_count: usize) -> Result<()> {
-    let separator: char = self.separator.into();
-    for _ in 0..i_count {
-      match self.line_current.chars().next() {
-        Some(x) if x == separator => {
-          self.line_current.remove(0);
-          continue
+    let tokens = self.line_current[self.line_current_pos..].split(self.separator).take(i_count);
+    let start = self.line_current_pos;
+    for token in tokens {
+      match token {
+        "" => self.line_current_pos += 1,
+        c => {
+          return self.line_error(ErrorKind::ParseSeparatorExpected(c.to_string(), lvm::Separator::try_from(self.separator).unwrap()))
         },
-        Some(c) => {
-          return self.line_error(ErrorKind::ParseSeparatorExpected(c, self.separator))
-        },
-        None => return self.line_error(ErrorKind::ParseEolUnexpected),
       }
     }
 
-    Ok(())
+    if self.line_current_pos - start != i_count {
+      self.line_current_pos = start;
+      self.line_error(ErrorKind::ParseEolUnexpected)
+    } else {
+      Ok(())
+    }
   }
 
   #[must_use]
@@ -149,19 +162,13 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
 
   #[must_use]
-  fn parse_token(&mut self) -> Result<String> {
-    let separator: char = self.separator.into();
-    let mut old_line_current = String::new();
-    std::mem::swap(&mut old_line_current, &mut self.line_current);
-    match old_line_current.find(separator) {
-      Some(index) => {
-        self.line_current = old_line_current.split_off(index);
-        Ok(old_line_current)
+  fn parse_token(&mut self) -> Result<&str> {
+    match self.line_current[self.line_current_pos..].split(self.separator).next() {
+      Some(s) => {
+        self.line_current_pos += s.len();
+        Ok(s)
       },
-      None if old_line_current.is_empty() => self.line_error(ErrorKind::ParseEolUnexpected),
-      None => {
-        Ok(old_line_current)
-      }
+      None => self.line_error(ErrorKind::ParseEolUnexpected),
     }
   }
 
@@ -254,7 +261,7 @@ impl<'de, R: std::io::BufRead> serde::de::MapAccess<'de> for Deserializer<R> {
   type Error = Error;
 
   fn next_key_seed<K: serde::de::DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>> {
-    match self.parse_token()?.as_ref() {
+    match self.parse_token()? {
       "***End_of_Header***" => Ok(None),
       t => seed.deserialize(t.into_deserializer()).map(Some)
     }
@@ -297,11 +304,15 @@ impl<'de, 'a, R: std::io::BufRead> serde::de::Deserializer<'de> for &'a mut Dese
   }
 
   fn deserialize_f32<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
-    v.visit_f32(self.parse_real::<f32>()?)
+    // v.visit_f32(self.parse_real::<f32>()?)
+    use std::str::FromStr;
+    self.parse_token().and_then(|s|f32::from_str(s.as_ref()).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f32(f))
   }
 
   fn deserialize_f64<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
-    v.visit_f64(self.parse_real::<f64>()?)
+    // v.visit_f64(self.parse_real::<f64>()?)
+    use std::str::FromStr;
+    self.parse_token().and_then(|s|f64::from_str(s.as_ref()).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f64(f))
   }
 
   fn deserialize_i8<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
@@ -363,7 +374,7 @@ impl<'de, 'a, R: std::io::BufRead> serde::de::Deserializer<'de> for &'a mut Dese
   }
 
   fn deserialize_identifier<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
-    v.visit_string(self.parse_token()?)
+    v.visit_str(self.parse_token()?)
   }
 
   fn deserialize_newtype_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, _v: V) -> Result<V::Value> {
@@ -371,11 +382,11 @@ impl<'de, 'a, R: std::io::BufRead> serde::de::Deserializer<'de> for &'a mut Dese
   }
 
   fn deserialize_str<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
-    v.visit_string(self.parse_token()?)
+    v.visit_str(self.parse_token()?)
   }
 
   fn deserialize_string<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
-    v.visit_string(self.parse_token()?)
+    v.visit_string(self.parse_token()?.to_string())
   }
 
   fn deserialize_tuple<V: serde::de::Visitor<'de>>(self, len: usize, v: V) -> Result<V::Value> {

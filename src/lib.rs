@@ -46,7 +46,7 @@ mod errors {
         display("An invalid separator \"{}\" was used by the file", c)
       }
       /// An error occurred while parsing a floating-point number
-      ParseFloatError(e: num::traits::ParseFloatError) {
+      ParseFloatError(e: std::num::ParseFloatError) {
         description("An error occurred while parsing a floating-point number")
         display("parse floating-point error: \"{:?}\"", e)
       }
@@ -56,7 +56,7 @@ mod errors {
         display("Error parsing line {}", l)
       }
       /// An unexpected character was found when attempting to parse a separator
-      ParseSeparatorExpected(c: char, s: lvm::Separator) {
+      ParseSeparatorExpected(c: String, s: lvm::Separator) {
         description("An unexpected character was found when attempting to parse a separator")
         display("Unexpected character \"{}\" was found when attempting to parse a {} separator", c, s.as_ref())
       }
