@@ -9,11 +9,9 @@ While serialization back to LVM is not currently supported, you can serialize to
 ```
 extern crate serde_lvm;
 
-use std::fs::File;
-
 fn main() {
-  let lvm_file = File::open("my.lvm").unwrap();
-  let lvm_data = serde_lvm::from_reader(lvm_file).unwrap();
+  let lvm_reader = std::fs::File::open("my.lvm").unwrap();
+  let lvm_data = serde_lvm::from_reader(lvm_reader).unwrap();
 
   // ...
 }
