@@ -1,6 +1,10 @@
 [package]
 authors = ["Steven Pease <peasteven@gmail.com>"]
 description = "Library for interacting with LabView's LVM file format"
+exclude = [
+    "data/*",
+    "src/bin/*"
+]
 homepage = "https://github.com/spease/serde_lvm.git"
 license = "MIT"
 name = "serde_lvm"
