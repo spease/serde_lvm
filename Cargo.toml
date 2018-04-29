@@ -1,24 +1,26 @@
 [package]
 authors = ["Steven Pease <peasteven@gmail.com>"]
-description = "Tools for interacting with LabView and associated file formats"
-homepage = "https://github.com/spease/labview.git"
-name = "labview"
+description = "Library for interacting with LabView's LVM file format"
+homepage = "https://github.com/spease/serde_lvm.git"
+name = "serde_lvm"
 readme = "README.md"
 version = "0.1.0"
-repository = "https://github.com/spease/labview.git"
+repository = "https://github.com/spease/serde_lvm.git"
 
 [profile.release]
 lto = true
 
 [dependencies]
-chrono = "0.4"
-env_logger = "0.4"
-error-chain = "0.10"
-itertools = "0.6"
-log = "0.3"
-num = "0.1"
-semver = "0.7"
-serde_derive = "1.0"
-serde = "1.0"
-strum = "0.8"
-strum_macros = "0.8"
+chrono = "0.4.0"
+env_logger = "0.5.3"
+error-chain = "0.11.0"
+itertools = "0.7.6"
+log = "0.4.1"
+num = "0.1.42"
+semver = "0.9.0"
+serde_derive = "1.0.27"
+serde = "1.0.27"
+strum = "0.8.0"
+strum_macros = "0.8.0"
+shrinkwraprs = "0.2.0"
+derive_more = "0.10.0"

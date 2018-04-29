@@ -7,6 +7,7 @@ use std;
 use serde::de::IntoDeserializer;
 
 #[derive(Debug)]
+#[must_use]
 struct Deserializer<R: std::io::BufRead> {
   line_current: String,
   line_current_pos: usize,
@@ -21,16 +22,15 @@ impl<R: std::io::BufRead> Deserializer<R> {
   const BOOL_NO: &'static str = "No";
   const BOOL_OPTIONS: &'static [&'static str] = &[Self::BOOL_NO, Self::BOOL_YES];
   const HEADER: &'static str = "LabVIEW Measurement";
-  const HEADER_OPTIONS :&'static [&'static str] = &[Self::HEADER];
+  const HEADER_OPTIONS: &'static [&'static str] = &[Self::HEADER];
 
-  #[must_use]
   fn from_reader(i_reader: R) -> Result<Self> {
     let mut lines = i_reader.lines();
 
     // Parse first line
-    let mut s = lines.next().ok_or(Error::from(ErrorKind::ParseEofUnexpected)).chain_err(|| ErrorKind::ParseLine(1))??;
+    let mut s = lines.next().ok_or_else(||Error::from(ErrorKind::ParseEofUnexpected)).chain_err(|| ErrorKind::ParseLine(1))??;
     // Pop separator
-    let separator = lvm::Separator::try_from(s.pop().ok_or(Error::from(ErrorKind::ParseEolUnexpected)).chain_err(|| ErrorKind::ParseLine(1))?)?.into();
+    let separator = lvm::Separator::try_from(s.pop().ok_or_else(||Error::from(ErrorKind::ParseEolUnexpected)).chain_err(|| ErrorKind::ParseLine(1))?)?.into();
     // Check header
     if s != Self::HEADER {
       return Err(Error::from(ErrorKind::ParseTokenUnexpected(s, Self::HEADER_OPTIONS))).chain_err(|| ErrorKind::ParseLine(1));
@@ -42,7 +42,7 @@ impl<R: std::io::BufRead> Deserializer<R> {
       line_current: String::new(),
       line_current_pos: 0,
       line_index: 1,
-      separator: separator,
+      separator,
       sequence_style: SequenceStyle::Following,
     };
     // Load the next line
@@ -50,33 +50,27 @@ impl<R: std::io::BufRead> Deserializer<R> {
     Ok(d)
   }
 
-  #[must_use]
   fn deserialize<'de, T: serde::de::Deserialize<'de>>(&mut self) -> Result<T> {
     let r = T::deserialize(&mut *self);
     self.line_result(r)
   }
 
-  #[must_use]
   fn line_result<T>(&self, r: Result<T>) -> Result<T> {
     r.chain_err(|| ErrorKind::ParseLine(self.line_index))
   }
 
-  #[must_use]
   fn line_error<T>(&self, e: ErrorKind) -> Result<T> {
     Err(Error::from(e)).chain_err(|| ErrorKind::ParseLine(self.line_index))
   }
 
-  #[must_use]
   fn line_is_empty(&self) -> bool {
     self.line_current.len() == self.line_current_pos
   }
 
-  #[must_use]
   fn peek_newline(&mut self) -> bool {
     self.line_is_empty()
   }
 
-  #[must_use]
   fn parse_bool(&mut self) -> Result<bool> {
     let token = self.parse_token()?.to_string();
     self.line_result(match token.as_ref() {
@@ -87,7 +81,6 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
 
   /*
-  #[must_use]
   fn parse_char(&mut self) -> Result<char> {
     match self.parse_token()? {
       ref t if t.len() == 1 => { Ok(t.chars().next().unwrap()) },
@@ -96,12 +89,10 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
   */
 
-  #[must_use]
   fn parse_integer<T: num::Integer>(&mut self) -> Result<T> where T: num::Num<FromStrRadixErr = std::num::ParseIntError> {
     Ok(T::from_str_radix(self.parse_token()?, 10)?)
   }
 
-  #[must_use]
   fn parse_newline_or_eof(&mut self) -> Result<bool> {
     if self.line_is_empty() {
       match self.input.next() {
@@ -119,7 +110,6 @@ impl<R: std::io::BufRead> Deserializer<R> {
     }
   }
 
-  #[must_use]
   fn parse_newline(&mut self) -> Result<()> {
     if self.parse_newline_or_eof()? {
       Ok(())
@@ -129,13 +119,11 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
 
   /*
-  #[must_use]
   fn parse_real<T: num::Float>(&mut self) -> Result<T> where T: num::Num<FromStrRadixErr = num::traits::ParseFloatError> {
     T::from_str_radix(self.parse_token()?.as_ref(), 10).map_err(|e|ErrorKind::ParseFloatError(e).into())
   }
   */
 
-  #[must_use]
   fn parse_separators(&mut self, i_count: usize) -> Result<()> {
     let tokens = self.line_current[self.line_current_pos..].split(self.separator).take(i_count);
     let start = self.line_current_pos;
@@ -156,12 +144,10 @@ impl<R: std::io::BufRead> Deserializer<R> {
     }
   }
 
-  #[must_use]
   fn parse_sequence(&mut self) -> Sequence<R> {
     Sequence::new(self.sequence_style, self)
   }
 
-  #[must_use]
   fn parse_token(&mut self) -> Result<&str> {
     match self.line_current[self.line_current_pos..].split(self.separator).next() {
       Some(s) => {
@@ -172,7 +158,6 @@ impl<R: std::io::BufRead> Deserializer<R> {
     }
   }
 
-  #[must_use]
   fn parse_tuple(&mut self, i_length: usize) -> Tuple<R> {
     Tuple::new(i_length, self)
   }
@@ -182,6 +167,7 @@ impl<R: std::io::BufRead> Deserializer<R> {
   }
 }
 
+#[must_use]
 struct Tuple<'a, R: std::io::BufRead + 'a> {
   de : &'a mut Deserializer<R>,
   length: usize,
@@ -212,12 +198,14 @@ impl<'a, 'de: 'a, R: std::io::BufRead + 'a> serde::de::SeqAccess<'de> for Tuple<
 }
 
 #[derive(Clone,Copy,Debug)]
+#[must_use]
 enum SequenceStyle {
   Following,
   FollowingSkipLast,
   Preceding,
 }
 
+#[must_use]
 struct Sequence<'a, R: std::io::BufRead + 'a> {
   de: &'a mut Deserializer<R>,
   first: bool,
@@ -306,13 +294,13 @@ impl<'de, 'a, R: std::io::BufRead> serde::de::Deserializer<'de> for &'a mut Dese
   fn deserialize_f32<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
     // v.visit_f32(self.parse_real::<f32>()?)
     use std::str::FromStr;
-    self.parse_token().and_then(|s|f32::from_str(s.as_ref()).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f32(f))
+    self.parse_token().and_then(|s|f32::from_str(s).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f32(f))
   }
 
   fn deserialize_f64<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
     // v.visit_f64(self.parse_real::<f64>()?)
     use std::str::FromStr;
-    self.parse_token().and_then(|s|f64::from_str(s.as_ref()).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f64(f))
+    self.parse_token().and_then(|s|f64::from_str(s).map_err(|e|ErrorKind::ParseFloatError(e).into())).and_then(|f|v.visit_f64(f))
   }
 
   fn deserialize_i8<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
@@ -377,8 +365,8 @@ impl<'de, 'a, R: std::io::BufRead> serde::de::Deserializer<'de> for &'a mut Dese
     v.visit_str(self.parse_token()?)
   }
 
-  fn deserialize_newtype_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, _v: V) -> Result<V::Value> {
-    unimplemented!()
+  fn deserialize_newtype_struct<V: serde::de::Visitor<'de>>(self, _name: &'static str, v: V) -> Result<V::Value> {
+    v.visit_newtype_struct(self)
   }
 
   fn deserialize_str<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value> {
@@ -448,7 +436,7 @@ pub fn from_reader<R: std::io::Read>(i_reader: R) -> Result<lvm::File> {
 
       measurements.push(lvm::Measurement {
         header: measurement_header,
-        data_headings: data_headings,
+        data_headings,
         data: data_rows,
       });
     }

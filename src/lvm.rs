@@ -1,10 +1,9 @@
 use super::errors::*;
 use chrono;
+use itertools::Itertools;
 use semver;
 use serde;
 use std;
-
-pub use lvm_format::from_reader;
 
 /// The default is the decimal separator of the system.
 /// 
@@ -21,22 +20,89 @@ enum DecimalSeparator {
   Comma,
 }
 
-type OperatorName = String;
-type ProjectName = String;
-type TestNumber = String;
+macro_rules! wrapper_classes {
+    ($($(#[$attr:meta])* pub struct $s:ident($t:ty);)*) => {
+        $(
+            $(#[$attr])*
+            #[derive(Clone, Debug, Deserialize, Display, Eq, From, Into, PartialEq, PartialOrd, Serialize, Shrinkwrap)]
+            pub struct $s($t);
+        )*
+    }
+}
+
+wrapper_classes!(
+    /// Channel name
+    pub struct ChannelName(String);
+    /// Name or instrument class of the unit under test
+    pub struct InstrumentName(String);
+    /// Model number of a unit under test
+    pub struct ModelNumber(String);
+    /// Serial number of the unit under test
+    pub struct SerialNumber(String);
+    /// Name of the operator who collected the data
+    pub struct OperatorName(String);
+    /// Name of the project that data was for
+    pub struct ProjectName(String);
+    /// Name of a test
+    pub struct TestName(String);
+    /// Test number from a TestSeries
+    pub struct TestNumber(String);
+    /// Series of a test
+    pub struct TestSeries(String);
+);
+
+/// Test numbers in a TestSeries
+#[derive(Clone, Debug, Shrinkwrap)]
+pub struct TestNumbers(Vec<TestNumber>);
+
+// FIXME: Add support for comma separator too
+const TEST_NUMBERS_SEPARATOR: char = ';';
+
+impl std::str::FromStr for TestNumbers {
+  type Err = ();
+
+  fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    Ok(TestNumbers(s.split(TEST_NUMBERS_SEPARATOR).map(|x|TestNumber(x.to_owned())).collect()))
+  }
+}
+impl<'de> serde::de::Deserialize<'de> for TestNumbers {
+  fn deserialize<D: serde::de::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    deserializer.deserialize_str(TestNumbersVisitor)
+  }
+}
+impl std::fmt::Display for TestNumbers {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
+    // FIXME: Could be more efficient
+    f.write_str(&self.0.iter().map(|x|&x.0).join(&TEST_NUMBERS_SEPARATOR.to_string()))
+  }
+}
+
+impl serde::ser::Serialize for TestNumbers {
+  fn serialize<S: serde::ser::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.collect_str(self)
+  }
+}
+
+struct TestNumbersVisitor;
+
+impl<'de> serde::de::Visitor<'de> for TestNumbersVisitor {
+  type Value = TestNumbers;
+
+  fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    formatter.write_str("Test numbers separated by semicolons")
+  }
+
+  fn visit_str<E: serde::de::Error>(self, value: &str) -> std::result::Result<Self::Value, E> {
+    value.parse().map_err(|_|serde::de::Error::custom(""))
+  }
+}
+
 pub(super) type DataRow = (Vec<f64>, Option<String>);
 
 /// Timezone-dependent date
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, From, Into, Ord, PartialEq, PartialOrd, Shrinkwrap)]
+#[must_use]
 pub struct Date(chrono::NaiveDate);
-
-impl std::ops::Deref for Date {
-  type Target = chrono::NaiveDate;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
 
 impl std::str::FromStr for Date {
   type Err = chrono::format::ParseError;
@@ -79,6 +145,7 @@ impl<'de> serde::de::Visitor<'de> for DateVisitor {
 
 /// LVM File
 #[derive(Debug, Deserialize, Serialize)]
+#[must_use]
 pub struct File {
   /// Metadata on the file itself
   pub header: FileHeader,
@@ -88,6 +155,7 @@ pub struct File {
 
 /// Header for the file
 #[derive(Debug, Deserialize, Serialize)]
+#[must_use]
 pub struct FileHeader {
   /// Date when the data collection started.
   #[serde(rename="Date")]
@@ -164,6 +232,7 @@ pub struct FileHeader {
 
 /// A set of measurements
 #[derive(Debug, Deserialize, Serialize)]
+#[must_use]
 pub struct Measurement {
   /// Header for this measurement segment
   pub header: MeasurementHeader,
@@ -175,6 +244,7 @@ pub struct Measurement {
 
 /// Header for measurement data
 #[derive(Debug, Deserialize, Serialize)]
+#[must_use]
 pub struct MeasurementHeader {
   /// Number of channels in the packet.
   ///
@@ -182,7 +252,7 @@ pub struct MeasurementHeader {
   /// For example, the Samples field has entries for each channel,
   /// so the reader must know the number of channels to properly parse it.
   #[serde(rename="Channels")]
-  pub channels: (usize, Vec<String>),
+  pub channels: (usize, Vec<ChannelName>),
 
   /// Date the data set in the segment started.
   /// 
@@ -212,15 +282,15 @@ pub struct MeasurementHeader {
 
   /// Name of the test that acquired the segment of data.
   #[serde(rename="Test_Name")]
-  pub test_name: Option<String>,
+  pub test_name: Option<TestName>,
 
   /// Test numbers in the Test_Series that acquired the data in this segment.
   #[serde(rename="Test_Number")]
-  pub test_numbers: Option<TestNumber>,
+  pub test_numbers: Option<TestNumbers>,
 
   /// Series of the test performed to get the data in this packet.
   #[serde(rename="Test_Series")]
-  pub test_series: Option<String>,
+  pub test_series: Option<TestSeries>,
 
   /// Time of day when you started acquiring the data set in the segment.
   ///
@@ -231,15 +301,15 @@ pub struct MeasurementHeader {
 
   /// Model number of the unit under test.
   #[serde(rename="UUT_M/N")]
-  pub uut_mn: Option<String>,
+  pub uut_mn: Option<ModelNumber>,
 
   /// Name or instrument class of the unit under test.
   #[serde(rename="UUT_Name")]
-  pub uut_name: Option<String>,
+  pub uut_name: Option<InstrumentName>,
 
   /// Serial number of the unit under test.
   #[serde(rename="UUT_S/N")]
-  pub uut_sn: Option<String>,
+  pub uut_sn: Option<SerialNumber>,
 
   /// The initial value for the x-axis.
   ///
@@ -279,6 +349,7 @@ pub struct MeasurementHeader {
 
 /// Character(s) used to separate each field in the file
 #[derive(AsRefStr, Clone, Copy, Debug, Deserialize, Serialize)]
+#[must_use]
 pub enum Separator {
   /// Comma separator (ASCII \0x2C)
   Comma,
@@ -310,16 +381,9 @@ impl Default for Separator {
 }
 
 /// Timezone-dependent time
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, From, Into, Ord, PartialEq, PartialOrd, Shrinkwrap)]
+#[must_use]
 pub struct Time(chrono::NaiveTime);
-
-impl std::ops::Deref for Time {
-  type Target = chrono::NaiveTime;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
 
 impl std::fmt::Display for Time {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
@@ -343,10 +407,11 @@ impl<'de> serde::de::Deserialize<'de> for Time {
 
 impl serde::ser::Serialize for Time {
   fn serialize<S: serde::ser::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-    s.serialize_str(self.to_string().as_ref())
+    s.collect_str(self)
   }
 }
 
+#[must_use]
 struct TimeVisitor;
 
 impl<'de> serde::de::Visitor<'de> for TimeVisitor {
@@ -365,6 +430,7 @@ impl<'de> serde::de::Visitor<'de> for TimeVisitor {
 
 /// Format of axis values - absolute or relative
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[must_use]
 pub enum TimePref {
   /// x-value is number of seconds since midnight, January 1, 1904 GMT
   Absolute,
@@ -380,6 +446,7 @@ impl Default for TimePref {
 /// Label for an axis
 //FIXME: Should probable be an "arbitrary text string"
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[must_use]
 pub enum Unit {
   /// Milliamps
   Milliamps,
@@ -389,6 +456,7 @@ pub enum Unit {
 
 /// Specifies the unit type of an axis
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[must_use]
 pub enum UnitType {
   /// Electric Potential (Jouls)
   #[serde(rename="Electric_Potential")]
@@ -403,16 +471,9 @@ impl Default for UnitType {
 }
 
 /// Reader / writer version
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, From, Into, Ord, PartialEq, PartialOrd, Shrinkwrap)]
+#[must_use]
 pub struct Version(semver::Version);
-
-impl std::ops::Deref for Version {
-  type Target = semver::Version;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
 
 impl std::fmt::Display for Version {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
@@ -428,7 +489,7 @@ impl std::str::FromStr for Version {
   type Err = semver::SemVerError;
 
   fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-    if !s.contains(".") {
+    if !s.contains('.') {
       semver::Version::parse(&format!("{}.0.0", s)).map(Version)
     } else {
       semver::Version::parse(s).map(Version)
@@ -448,6 +509,7 @@ impl serde::ser::Serialize for Version {
   }
 }
 
+#[must_use]
 struct VersionVisitor;
 
 impl<'de> serde::de::Visitor<'de> for VersionVisitor {
@@ -465,6 +527,7 @@ impl<'de> serde::de::Visitor<'de> for VersionVisitor {
 
 ///  Specifies which x-values are saved.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[must_use]
 pub enum XColumns {
   /// Save no x-values.
   /// 
@@ -484,37 +547,3 @@ impl Default for XColumns {
   fn default() -> Self { XColumns::One }
 }
 
-#[cfg(test)]
-mod tests {
-  #[test]
-  fn lvm_parsing() {
-    ::env_logger::init().unwrap();
-    for de in ::std::fs::read_dir("data").unwrap() {
-      let filepath = de.unwrap().path();
-      if filepath.file_name().unwrap().to_str().unwrap().starts_with(".") {
-        continue;
-      }
-      info!("TESTING {:?}", filepath);
-      for _ in 0..1 {
-        match super::from_reader(::std::fs::File::open(filepath.clone()).unwrap()) {
-          Ok(lvm_file) => {
-            info!("{:#?}", lvm_file.header);
-            for measurement in lvm_file.measurements {
-              info!("{:#?}", measurement.header);
-            }
-          },
-          Err(e) => {
-            info!("{}", e);
-            for e in e.iter().skip(1) {
-              info!("caused by: {}", e);
-            }
-            if let Some(backtrace) = e.backtrace() {
-              info!("{:?}", backtrace);
-            }
-            panic!("FAILURE");
-          }
-        }
-      }
-    }
-  }
-}
