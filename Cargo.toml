@@ -9,7 +9,7 @@ homepage = "https://github.com/spease/serde_lvm.git"
 license = "MIT"
 name = "serde_lvm"
 readme = "README.md"
-version = "0.1.0"
+version = "0.1.1"
 repository = "https://github.com/spease/serde_lvm.git"
 
 [profile.release]
